@@ -317,6 +317,84 @@ class TestMsgSigntxSegwitNative:
             == "010000000001028a44999c07bba32df1cacdc50987944e68e3205b4429438fdde35c76024614090100000017160014d16b8c0680c61fc6ed2e407455715055e41052f5ffffffff7b010c5faeb41cc5c253121b6bf69bf1a7c5867cd7f2d91569fea0ecd311b8650100000000ffffffff03e0aebb0000000000160014a579388225827d9f2fe9014add644487808c695d00cdb7020000000017a91491233e24a9bf8dbb19c1187ad876a9380c12e787870d859b03000000001976a914a579388225827d9f2fe9014add644487808c695d88ac02483045022100ead79ee134f25bb585b48aee6284a4bb14e07f03cc130253e83450d095515e5202201e161e9402c8b26b666f2b67e5b668a404ef7e57858ae9a6a68c3837e65fdc69012103e7bfe10708f715e8538c92d46ca50db6f657bbc455b7494e6a0303ccdb868b7902463043021f585c54a84dc7326fa60e22729accd41153c7dd4725bd4c8f751aa3a8cd8d6a0220631bfd83fc312cc6d5d129572a25178696d81eaf50c8c3f16c6121be4f4c029d012103505647c017ff2156eb6da20fae72173d3b681a1d0a629f95f49e884db300689f00000000"
         )
 
+    @pytest.mark.skip_t1
+    def test_send_external_p2sh(self, client):
+        inp1 = proto.TxInputType(
+            # 2N1LGaGg836mqSQqiuUBLfcyGBhyZbremDX
+            amount=111145789,
+            prev_hash=TXHASH_091446,
+            prev_index=1,
+            script_type=proto.InputScriptType.EXTERNAL,
+            script_sig=bytes.fromhex("160014d16b8c0680c61fc6ed2e407455715055e41052f5"),
+            witness=bytes.fromhex(
+                "02483045022100ead79ee134f25bb585b48aee6284a4bb14e07f03cc130253e83450d095515e5202201e161e9402c8b26b666f2b67e5b668a404ef7e57858ae9a6a68c3837e65fdc69012103e7bfe10708f715e8538c92d46ca50db6f657bbc455b7494e6a0303ccdb868b79"
+            ),
+        )
+        inp2 = proto.TxInputType(
+            address_n=parse_path("84'/1'/0'/1/0"),
+            amount=7289000,
+            prev_hash=TXHASH_65b811,
+            prev_index=1,
+            script_type=proto.InputScriptType.SPENDWITNESS,
+        )
+        out1 = proto.TxOutputType(
+            address="tb1q54un3q39sf7e7tlfq99d6ezys7qgc62a6rxllc",
+            amount=12300000,
+            script_type=proto.OutputScriptType.PAYTOADDRESS,
+        )
+        out2 = proto.TxOutputType(
+            # address_n=parse_path("44'/1'/0'/0/0"),
+            # script_type=proto.OutputScriptType.PAYTOP2SHWITNESS,
+            address="2N6UeBoqYEEnybg4cReFYDammpsyDw8R2Mc",
+            script_type=proto.OutputScriptType.PAYTOADDRESS,
+            amount=45600000,
+        )
+        out3 = proto.TxOutputType(
+            address="mvbu1Gdy8SUjTenqerxUaZyYjmveZvt33q",
+            amount=111145789 + 7289000 - 11000 - 12300000 - 45600000,
+            script_type=proto.OutputScriptType.PAYTOADDRESS,
+        )
+
+        with client:
+            client.set_expected_responses(
+                [
+                    request_input(0),
+                    request_input(1),
+                    request_meta(TXHASH_65b811),
+                    request_input(0, TXHASH_65b811),
+                    request_output(0, TXHASH_65b811),
+                    request_output(1, TXHASH_65b811),
+                    request_output(0),
+                    proto.ButtonRequest(code=B.ConfirmOutput),
+                    request_output(1),
+                    proto.ButtonRequest(code=B.ConfirmOutput),
+                    request_output(2),
+                    proto.ButtonRequest(code=B.ConfirmOutput),
+                    request_input(0),
+                    request_meta(TXHASH_091446),
+                    request_input(0, TXHASH_091446),
+                    request_output(0, TXHASH_091446),
+                    request_output(1, TXHASH_091446),
+                    proto.ButtonRequest(code=B.SignTx),
+                    request_input(0),
+                    request_input(1),
+                    request_output(0),
+                    request_output(1),
+                    request_output(2),
+                    request_input(0),
+                    request_input(1),
+                    request_finished(),
+                ]
+            )
+            _, serialized_tx = btc.sign_tx(
+                client, "Testnet", [inp1, inp2], [out1, out2, out3], prev_txes=TX_API
+            )
+
+        assert (
+            serialized_tx.hex()
+            == "010000000001028a44999c07bba32df1cacdc50987944e68e3205b4429438fdde35c76024614090100000017160014d16b8c0680c61fc6ed2e407455715055e41052f5ffffffff7b010c5faeb41cc5c253121b6bf69bf1a7c5867cd7f2d91569fea0ecd311b8650100000000ffffffff03e0aebb0000000000160014a579388225827d9f2fe9014add644487808c695d00cdb7020000000017a91491233e24a9bf8dbb19c1187ad876a9380c12e787870d859b03000000001976a914a579388225827d9f2fe9014add644487808c695d88ac02483045022100ead79ee134f25bb585b48aee6284a4bb14e07f03cc130253e83450d095515e5202201e161e9402c8b26b666f2b67e5b668a404ef7e57858ae9a6a68c3837e65fdc69012103e7bfe10708f715e8538c92d46ca50db6f657bbc455b7494e6a0303ccdb868b7902463043021f585c54a84dc7326fa60e22729accd41153c7dd4725bd4c8f751aa3a8cd8d6a0220631bfd83fc312cc6d5d129572a25178696d81eaf50c8c3f16c6121be4f4c029d012103505647c017ff2156eb6da20fae72173d3b681a1d0a629f95f49e884db300689f00000000"
+        )
+
     @pytest.mark.multisig
     def test_send_multisig_1(self, client):
         nodes = [
