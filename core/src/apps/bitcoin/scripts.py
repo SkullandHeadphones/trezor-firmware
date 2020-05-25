@@ -23,7 +23,7 @@ from .writers import (
 )
 
 if False:
-    from typing import List, Optional
+    from typing import List, Optional, Tuple
     from .writers import Writer
 
 
@@ -117,6 +117,7 @@ def bip143_derive_script_code(txi: TxInputType, pubkeyhash: bytes) -> bytearray:
         txi.script_type == InputScriptType.SPENDWITNESS
         or txi.script_type == InputScriptType.SPENDP2SHWITNESS
         or txi.script_type == InputScriptType.SPENDADDRESS
+        or txi.script_type == InputScriptType.EXTERNAL
     )
     if p2pkh:
         # for p2wpkh in p2sh or native p2wpkh
@@ -251,6 +252,24 @@ def witness_p2wpkh(signature: bytes, pubkey: bytes, sighash: int) -> bytearray:
     return w
 
 
+def read_witness_p2wpkh(witness: bytes) -> Tuple[bytes, bytes, int]:
+    if witness[0] != 2:
+        # num of stack items, in P2WPKH it's always 2
+        raise wire.DataError("Invalid witness.")
+
+    n, offset = read_bitcoin_varint(witness, 1)
+    signature = witness[offset : offset + n - 1]
+    sighash_type = witness[offset + n - 1]
+    offset += n
+
+    n, offset = read_bitcoin_varint(witness, offset)
+    if offset + n != len(witness):
+        raise wire.DataError("Invalid witness.")
+    pubkey = witness[offset : offset + n]
+
+    return pubkey, signature, sighash_type
+
+
 def witness_p2wsh(
     multisig: MultisigRedeemScriptType,
     signature: bytes,
@@ -298,6 +317,35 @@ def witness_p2wsh(
     write_output_script_multisig(w, pubkeys, multisig.m)
 
     return w
+
+
+def get_p2wpkh_pubkey_hash(
+    script_sig: bytes, script_pubkey: bytes, coin: CoinInfo
+) -> bytes:
+    pubkey_hash = bytes()
+    if (  # P2WPKH
+        not script_sig
+        and len(script_pubkey) == 22
+        and script_pubkey[0] == 0x00  # witness version byte
+        and script_pubkey[1] == 0x14  # pub key hash length
+    ):
+        pubkey_hash = script_pubkey[2:]
+    elif (  # P2WPKH nested in BIP16 P2SH
+        len(script_pubkey) == 23
+        and script_pubkey[0] == 0xA9  # OP_HASH_160
+        and script_pubkey[1] == 0x14  # pushing 20 bytes of script hash
+        and script_pubkey[22] == 0x87  # OP_EQUAL
+        and len(script_sig) == 23
+        and script_sig[0] == 0x16  # length of the data
+        and script_sig[1] == 0x00  # witness version byte
+        and script_sig[2] == 0x14  # pub key hash length
+    ):
+        script_hash = script_pubkey[2:22]
+        if coin.script_hash(script_sig[1:]) != script_hash:
+            raise wire.DataError("Invalid script hash")
+        pubkey_hash = script_sig[3:]
+
+    return pubkey_hash
 
 
 # Multisig
@@ -405,3 +453,23 @@ def append_signature(w: Writer, signature: bytes, sighash: int) -> None:
 def append_pubkey(w: Writer, pubkey: bytes) -> None:
     write_op_push(w, len(pubkey))
     write_bytes_unchecked(w, pubkey)
+
+
+def read_bitcoin_varint(data: bytes, offset: int) -> Tuple[int, int]:
+    prefix = data[offset]
+    offset += 1
+    if prefix < 253:
+        n = prefix
+    elif prefix == 253:
+        n = data[offset]
+        n += data[offset + 1] << 8
+        offset += 2
+    elif prefix == 254:
+        n = data[offset]
+        n += data[offset + 1] << 8
+        n += data[offset + 2] << 16
+        n += data[offset + 3] << 24
+        offset += 4
+    else:
+        raise wire.DataError("Invalid VarInt")
+    return n, offset

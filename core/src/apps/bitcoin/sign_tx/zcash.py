@@ -48,7 +48,7 @@ class Overwintered(Bitcoinlike):
         else:
             raise wire.DataError("Unsupported version for overwintered transaction")
 
-    async def step7_finish(self) -> None:
+    async def step8_finish(self) -> None:
         self.write_tx_footer(self.serialized_tx, self.tx)
 
         if self.tx.version == 3:
