@@ -106,6 +106,30 @@ def output_derive_script(address: str, coin: CoinInfo) -> bytes:
     raise wire.DataError("Invalid address type")
 
 
+def get_pubkey_and_signature(
+    script_pubkey: bytes, script_sig: bytes, witness: bytes, coin: CoinInfo
+) -> Tuple[bytes, bytes, int]:
+    # P2WPKH or P2WPKH nested in BIP16 P2SH
+    pubkey_hash = get_p2wpkh_pubkey_hash(script_sig, script_pubkey, coin)
+    if pubkey_hash:
+        public_key, signature, sighash_type = read_witness_p2wpkh(witness)
+        if common.ecdsa_hash_pubkey(public_key, coin) != pubkey_hash:
+            raise wire.DataError("Invalid public key hash")
+        return public_key, signature, sighash_type
+
+    # P2PKH
+    pubkey_hash = get_p2pkh_pubkey_hash(script_pubkey)
+    if pubkey_hash:
+        public_key, signature, sighash_type = read_input_script_p2pkh_or_p2sh(
+            script_sig
+        )
+        if common.ecdsa_hash_pubkey(public_key, coin) != pubkey_hash:
+            raise wire.DataError("Invalid public key hash")
+        return public_key, signature, sighash_type
+
+    raise wire.DataError("Unsupported scriptPubKey")
+
+
 # see https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
 # item 5 for details
 def bip143_derive_script_code(txi: TxInputType, pubkeyhash: bytes) -> bytearray:
@@ -142,6 +166,20 @@ def input_script_p2pkh_or_p2sh(
     append_signature(w, signature, sighash)
     append_pubkey(w, pubkey)
     return w
+
+
+def read_input_script_p2pkh_or_p2sh(script_sig: bytes) -> Tuple[bytes, bytes, int]:
+    n, offset = read_op_push(script_sig, 0)
+    signature = script_sig[offset : offset + n - 1]
+    sighash_type = script_sig[offset + n - 1]
+    offset += n
+
+    n, offset = read_op_push(script_sig, offset)
+    if offset + n != len(script_sig):
+        raise wire.DataError("Invalid scriptSig.")
+    pubkey = script_sig[offset : offset + n]
+
+    return pubkey, signature, sighash_type
 
 
 def output_script_p2pkh(pubkeyhash: bytes) -> bytearray:
@@ -350,6 +388,21 @@ def get_p2wpkh_pubkey_hash(
     return pubkey_hash
 
 
+def get_p2pkh_pubkey_hash(script_pubkey: bytes) -> bytes:
+    pubkey_hash = bytes()
+    if (  # P2PKH
+        len(script_pubkey) == 25
+        and script_pubkey[0] == 0x76  # OP_DUP
+        and script_pubkey[1] == 0xA9  # OP_HASH_160
+        and script_pubkey[2] == 0x14  # pushing 20 bytes
+        and script_pubkey[23] == 0x88  # OP_EQUALVERIFY
+        and script_pubkey[24] == 0xAC  # OP_CHECKSIG
+    ):
+        pubkey_hash = script_pubkey[3:23]
+
+    return pubkey_hash
+
+
 # Multisig
 # ===
 #
@@ -474,4 +527,27 @@ def read_bitcoin_varint(data: bytes, offset: int) -> Tuple[int, int]:
         offset += 4
     else:
         raise wire.DataError("Invalid VarInt")
+    return n, offset
+
+
+def read_op_push(data: bytes, offset: int) -> Tuple[int, int]:
+    prefix = data[offset]
+    offset += 1
+    if prefix < 0x4C:
+        n = prefix
+    elif prefix == 0x4C:
+        n = data[offset]
+        offset += 1
+    elif prefix == 0x4D:
+        n = data[offset]
+        n += data[offset + 1] << 8
+        offset += 2
+    elif prefix == 0x4E:
+        n = data[offset]
+        n += data[offset + 1] << 8
+        n += data[offset + 2] << 16
+        n += data[offset + 3] << 24
+        offset += 4
+    else:
+        raise wire.DataError("Invalid OP_PUSH")
     return n, offset
