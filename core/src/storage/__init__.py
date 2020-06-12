@@ -16,9 +16,8 @@ def init_unlocked() -> None:
     version = device.get_version()
     if version == common.STORAGE_VERSION_01:
         _migrate_from_version_01()
-    # migrate here!
-    # if not device.is_initialized() and device.get_version():
-    #     common.set_bool(common.APP_DEVICE, device.INITIALIZED, True, public=True)
+    if not device.is_initialized() and device.get_version():
+        common.set_bool(common.APP_DEVICE, device.INITIALIZED, True, public=True)
 
 
 def reset_storage() -> None:
