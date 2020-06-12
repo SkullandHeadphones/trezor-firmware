@@ -117,6 +117,15 @@ if False:
             ...
 
 
+async def _wrap_protobuf_load(
+    reader: protobuf.AsyncReader, expected_type: Type[protobuf.LoadedMessageType]
+) -> protobuf.LoadedMessageType:
+    try:
+        return await protobuf.load_message(reader, expected_type)
+    except Exception:
+        raise DataError("Failed to decode message")
+
+
 class DummyContext:
     async def call(self, *argv: Any) -> None:
         pass
@@ -188,7 +197,7 @@ class Context:
         workflow.idle_timer.touch()
 
         # parse the message and return it
-        return await protobuf.load_message(reader, expected_type)
+        return await _wrap_protobuf_load(reader, expected_type)
 
     async def read_any(
         self, expected_wire_types: Iterable[int]
@@ -224,7 +233,7 @@ class Context:
         workflow.idle_timer.touch()
 
         # parse the message and return it
-        return await protobuf.load_message(reader, exptype)
+        return await _wrap_protobuf_load(reader, exptype)
 
     async def write(self, msg: protobuf.MessageType) -> None:
         writer = self.make_writer()
@@ -336,7 +345,7 @@ async def handle_session(
 
                     # Try to decode the message according to schema from
                     # `req_type`. Raises if the message is malformed.
-                    req_msg = await protobuf.load_message(req_reader, req_type)
+                    req_msg = await _wrap_protobuf_load(req_reader, req_type)
 
                     # At this point, message reports are all processed and
                     # correctly parsed into `req_msg`.
